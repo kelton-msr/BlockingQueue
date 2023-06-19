@@ -4,6 +4,7 @@ EXTENDS Naturals, Sequences, FiniteSets
 CONSTANTS Producers,   (* the (nonempty) set of producers                       *)
           Consumers,   (* the (nonempty) set of consumers                       *)
           BufCapacity, (* the maximum number of messages in the bounded buffer  *)
+          N,
           Poison
 
 ASSUME Assumption ==
@@ -32,8 +33,8 @@ ac ==
 
 -----------------------------------------------------------------------------
 
-VARIABLES buffer, waitSet
-vars == <<buffer, waitSet, prod, cons>>
+VARIABLES buffer, waitSet, hp, cc
+vars == <<buffer, waitSet, prod, cons, hp, cc>>
 
 NotifyOther(Others) == 
     IF waitSet \cap Others # {}
@@ -97,6 +98,8 @@ Get(t) ==
 Init == 
     /\ buffer = <<>>
     /\ waitSet = {}
+    /\ cc = 0
+    /\ hp = FALSE
     \* The system requires |C| * |P| poison pills to terminate reliably. Perhaps,
     \* this is what Goetz et. al. mean by "unwiedly" on page 156 in their book
     \* Java Concurrency in Practice. However, it is unclear why the authors write
@@ -106,8 +109,10 @@ Init ==
 
 (* Then, pick a thread out of all running threads and have it do its thing. *)
 Next == 
-    \/ \E p \in Producers: Put(p, p) \* Add some data to buffer
-    \/ \E c \in Consumers: Get(c)
+    /\ hp' = hp \/ ap = {}
+    /\ cc' = IF hp' THEN cc + 1 ELSE 0 \* this IF due to an optimization
+    /\  \/ \E p \in Producers: Put(p, p) \* Add some data to buffer
+        \/ \E c \in Consumers: Get(c)
 
 Spec ==
     /\ Init 
@@ -136,8 +141,11 @@ QueueEmpty ==
     []((ap \cup ac) = {}) => (buffer = <<>>)
 
 \* The system terminates iff all producers terminate.
+\* GlobalTermination ==
+\*  (ap = {}) ~> [](ac = {})
 GlobalTermination ==
-    (ap = {}) ~> [](ac = {})
+  \* to you need a box outside of this whole thing?
+  ~([]((ap = {}) => [](cc <= N \/ ac = {}))) => (CSVWrite("%1$s#%2$s#%3$s#%4$s",<<cc,hp, Cardinality(cons), TLCGet("level")>>,CSVFile))
 
 THEOREM Spec => QueueEmpty /\ GlobalTermination
 -----------------------------------------------------------------------------

@@ -1,9 +1,10 @@
 ----------------------- MODULE BlockingQueuePoisonPill -----------------------
-EXTENDS Naturals, Sequences, FiniteSets
+EXTENDS Naturals, Sequences, FiniteSets, CSV, TLC
 
-CONSTANTS Producers,   (* the (nonempty) set of producers                       *)
-          Consumers,   (* the (nonempty) set of consumers                       *)
-          BufCapacity  (* the maximum number of messages in the bounded buffer  *)
+CONSTANTS Producers,   (* the (nonempty) set of producers                          *)
+          Consumers,   (* the (nonempty) set of consumers                          *)
+          BufCapacity, (* the maximum number of messages in the bounded buffer     *)
+          N            (* the depth of which we are checking for a bounded diamond *)
 
 ASSUME Assumption ==
        /\ Producers # {}                      (* at least one producer *)
@@ -28,8 +29,8 @@ ConstInit ==
     /\ P \in (SUBSET Producers \ {{}})
     /\ C \in (SUBSET Consumers \ {{}})
 
-VARIABLES buffer, waitSet, prod, cons
-vars == <<B, P, C, buffer, waitSet, prod, cons>>
+VARIABLES buffer, waitSet, prod, cons, hp, cc
+vars == <<B, P, C, buffer, waitSet, prod, cons, hp, cc>>
 
 -----------------------------------------------------------------------------
 
@@ -106,12 +107,16 @@ Cleanup ==
 Init == /\ ConstInit
         /\ prod = P
         /\ cons = C
+        /\ hp = FALSE
+        /\ cc = 0
         /\ buffer = <<>>
         /\ waitSet = {}
         
 (* Then, pick a thread out of all running threads and have it do its thing. *)
 Next == 
     /\ UNCHANGED consts
+    /\ hp' = (hp \/ prod = {})
+    /\ cc' = IF hp' THEN cc + 1 ELSE 0 \* this IF due to an optimization
     /\ \/ \E p \in prod: Put(p, p)
        \/ \E p \in prod: Terminate(p)
        \/ \E c \in cons: Get(c)
@@ -135,12 +140,22 @@ QueueEmpty ==
     ((prod \cup cons) = {}) => (buffer = <<>>)
 
 \* The system terminates iff all producers terminate.
-GlobalTermination ==
-    (prod = {}) ~> [](cons = {})
+\* GlobalTermination ==
+\*    (prod = {}) ~> [](cons = {})
+CSVFile ==
+    "R/PoisonPillBlockingQueue.csv"
 
+GlobalTermination ==
+    (hp /\ ~(cc <= N \/ cons = {}) /\ ~gt) => (CSVWrite("%1$s#%2$s#%3$s#%4$s",<<cc,hp, Cardinality(cons), TLCGet("level")>>,CSVFile) /\ gt' = TRUE)
+    \* FALSE => CSVWrite("%1$s#%2$s#%3$s#%4$s",<<cc, hp, Cardinality(cons),  TLCGet("level")>>,CSVFile)
+    \*~(hp => (cc <= N \/ cons = {})) => CSVWrite("%1$s#%2$s#%3$s#%4$s",<<cc,hp, Cardinality(cons), TLCGet("level")>>,CSVFile)
 Spec ==
     Init /\ [][Next]_vars /\ WF_vars(Next) 
+        
 
+
+ASSUME
+    CSVRecords(CSVFile) = 0 => CSVWrite("cc#hp#consumer#level", <<>>, CSVFile)
 -----------------------------------------------------------------------------
 \* This spec still implementes the high-level BlockingQueue spec.
 
